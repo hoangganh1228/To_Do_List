@@ -1,0 +1,32 @@
+[package]
+name = "to_do_list"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Core web framework
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+
+# Environment variables
+dotenvy = "0.15"
+
+# Database
+mongodb = "3.1"
+
+# Serialization / Deserialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# HTTP layers & middleware
+tower = "0.5"
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Utilities
+uuid = "1"
+bcrypt = "0.17.1"
+chrono = { version = "0.4", features = ["serde"] }
