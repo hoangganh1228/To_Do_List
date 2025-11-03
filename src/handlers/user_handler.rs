@@ -53,3 +53,32 @@ pub async fn create_user(
   Ok(Json(response))
 }
 
+pub async fn get_user(
+  State(app_state): State<AppState>,
+  Path(id): Path<ObjectId>,
+) -> Result<Json<UserResponse>, StatusCode> {
+  
+  let collection = app_state.db.collection::<User>("users");
+  let filter = mongodb::bson::doc! { 
+    "_id": id,
+    "deleted": false,
+  };
+
+  let user = collection.find_one(filter).await
+      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+      .ok_or(StatusCode::NOT_FOUND)?;
+
+  let response = UserResponse {
+    id: user.id.unwrap().to_hex(),
+    full_name: user.full_name,
+    email: user.email,
+    role: user.role,
+    created_at: user.created_at,
+    updated_at: user.updated_at,
+    created_by: user.created_by.map(|id| id.to_hex()),
+    updated_by: user.updated_by.map(|id| id.to_hex()),
+  };
+
+  Ok(Json(response))
+}
+
