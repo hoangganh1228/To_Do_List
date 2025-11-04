@@ -8,7 +8,8 @@ use mongodb::bson::oid::ObjectId;
 use serde::Deserialize;
 use crate::{
   db::AppState,
-  models::{Task, CreateTaskRequest, UpdateTaskRequest, TaskResponse, TaskStatus, TaskPriority},
+  models::{Task, TaskStatus, TaskPriority},
+  dtos::{CreateTaskRequest, UpdateTaskRequest, TaskResponse},
 };
 use chrono::{DateTime, Utc};
 
