@@ -8,7 +8,8 @@ use mongodb::bson::oid::ObjectId;
 use futures_util::StreamExt;
 use crate::{
   db::AppState,
-  models::{CreateUserRequest, UpdateUserRequest, UserResponse, User},
+  models::{User},
+  dtos::{CreateUserRequest, UpdateUserRequest, UserResponse},  // Import DTOs từ dtos
 };
 use bcrypt::{hash, DEFAULT_COST};
 use chrono::Utc;

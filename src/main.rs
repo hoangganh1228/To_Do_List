@@ -2,6 +2,7 @@ mod db;
 mod models;
 mod handlers;
 mod routes;
+mod dtos;
 
 use axum::Router;
 use tower::ServiceBuilder;
