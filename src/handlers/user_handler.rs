@@ -5,11 +5,11 @@ use axum::{
 };
 
 use mongodb::bson::oid::ObjectId;
+use futures_util::StreamExt;
 use crate::{
   db::AppState,
   models::{CreateUserRequest, UpdateUserRequest, UserResponse, User},
 };
-
 use bcrypt::{hash, DEFAULT_COST};
 use chrono::Utc;
 
@@ -80,5 +80,34 @@ pub async fn get_user(
   };
 
   Ok(Json(response))
+}
+
+pub async fn list_users(
+  State(app_state): State<AppState>,
+) -> Result<Json<Vec<UserResponse>>, StatusCode> {
+  let collection = app_state.db.collection::<User>("users");
+
+  let filter = mongodb::bson::doc! { "deleted": false };
+
+  let mut cursor = collection.find(filter).await
+      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+  let mut users = Vec::new();
+  while let Some(user_result) = cursor.next().await
+  {
+    let user = user_result.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    users.push(UserResponse {
+      id: user.id.unwrap().to_hex(),
+      full_name: user.full_name,
+      email: user.email,
+      role: user.role,
+      created_by: user.created_by.map(|id| id.to_hex()),
+      updated_by: user.updated_by.map(|id| id.to_hex()),
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+    });
+  }
+
+  Ok(Json(users))
 }
 

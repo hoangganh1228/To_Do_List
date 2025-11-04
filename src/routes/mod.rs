@@ -11,7 +11,8 @@ use crate:: {
 pub fn create_router(app_state: AppState) -> Router
 {
   Router::new()
-    .route("/users", post(handlers::create_user))
-    .route("/users/:id", get(handlers::get_user))
+    .route("/api/users", post(handlers::create_user))
+    .route("/api/users/:id", get(handlers::get_user))
+    .route("/api/users", get(handlers::list_users))
     .with_state(app_state)
 }
