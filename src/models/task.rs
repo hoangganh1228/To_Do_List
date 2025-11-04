@@ -39,6 +39,8 @@ pub struct Task {
   
   #[serde(default)]
   pub status: TaskStatus,
+
+  pub deleted: bool,
   
   #[serde(default)]
   pub priority: TaskPriority,
@@ -59,9 +61,12 @@ pub struct Task {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateTaskRequest {
+  pub user_id: String,
   pub title: String,
   pub description: Option<String>,
+  #[serde(default)] 
   pub status: TaskStatus,
+  #[serde(default)]
   pub priority: TaskPriority,
   pub due_date: Option<DateTime<Utc>>,
 }
