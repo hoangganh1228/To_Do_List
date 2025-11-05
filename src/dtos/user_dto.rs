@@ -28,3 +28,14 @@ pub struct UserResponse {
   pub created_at: Option<DateTime<Utc>>,
   pub updated_at: Option<DateTime<Utc>>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct LoginRequest {
+  pub email: String,
+  pub password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoginResponse {
+  pub token: String,
+}

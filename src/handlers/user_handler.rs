@@ -8,10 +8,16 @@ use futures_util::StreamExt;
 use crate::{
   db::AppState,
   models::{User},
-  dtos::{CreateUserRequest, UpdateUserRequest, UserResponse},  // Import DTOs từ dtos
+  dtos::{CreateUserRequest, UpdateUserRequest, UserResponse, LoginRequest, LoginResponse},  // Import DTOs từ dtos
 };
 use bcrypt::{hash, DEFAULT_COST};
 use chrono::Utc;
+
+use crate::auth::jwt::Claims;
+use crate::auth::jwt::create_token;
+use bcrypt::verify;
+use std::time::Instant;
+
 
 pub async fn create_user(
   State(app_state): State<AppState>,
@@ -109,5 +115,44 @@ pub async fn list_users(
   }
 
   Ok(Json(users))
+}
+
+pub async fn login(
+  State(app_state): State<AppState>,
+  Json(payload): Json<LoginRequest>,
+) -> Result<Json<LoginResponse>, StatusCode> {
+  let collection = app_state.db.collection::<User>("users");
+
+  let filter = mongodb::bson::doc! { 
+    "email": payload.email, 
+    "deleted": false 
+  };
+
+  let start = Instant::now();
+
+  let user = collection.find_one(filter).await
+      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+      .ok_or(StatusCode::NOT_FOUND)?;
+  
+  verify(&payload.password, &user.password)
+    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+  
+    if !verify(&payload.password, &user.password)
+      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
+      return Err(StatusCode::UNAUTHORIZED);
+    }
+
+
+  let user_id = user.id.unwrap().to_hex();
+  let claims = Claims::new(
+    user_id.clone(),
+    user.email.clone(),
+    user.role,
+  );
+  
+  let token = create_token(claims).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+  let response = LoginResponse { token };
+  println!("⏱️ Handler took {:?}", start.elapsed());
+  Ok(Json(response))
 }
 

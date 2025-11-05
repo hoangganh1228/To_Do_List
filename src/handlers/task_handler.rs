@@ -29,9 +29,6 @@ pub async fn create_task(
   let user_object_id = ObjectId::parse_str(&payload.user_id)
       .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-  println!("user_object_id: {:?}", user_object_id);
-  println!("payload: {:?}", payload);
-
   let task = Task {
     id: None,
     user_id: user_object_id,
