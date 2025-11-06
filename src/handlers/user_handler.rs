@@ -1,7 +1,7 @@
 use axum::{
   http::StatusCode, 
   extract::{State, Path, Query},
-  response::Json,
+  response::{Json, IntoResponse},
 };
 use mongodb::bson::oid::ObjectId;
 use futures_util::StreamExt;
@@ -17,14 +17,35 @@ use crate::auth::jwt::Claims;
 use crate::auth::jwt::create_token;
 use bcrypt::verify;
 use std::time::Instant;
+use crate::auth::middleware::{AuthenticatedUser, RoleGuard};
 
 
 pub async fn create_user(
   State(app_state): State<AppState>,
+  admin: AuthenticatedUser,
   Json(payload): Json<CreateUserRequest>,
 ) -> Result<Json<UserResponse>, StatusCode> {
+  admin.require_role(0).map_err(|_| StatusCode::FORBIDDEN)?;
 
-  let collection = app_state.db.collection::<User>("users");   // Get the "users" collection from MongoDB, mapping each document to the User struct
+  let admin_object_id = ObjectId::parse_str(&admin.user_id)
+      .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+  let collection = app_state.db.collection::<User>("users");
+  
+  let existing_user_filter = mongodb::bson::doc! { 
+    "email": &payload.email,
+    "deleted": false
+  };
+
+  let existing_user = collection.find_one(existing_user_filter).await
+      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+  
+  if existing_user.is_some() {
+    return Err(StatusCode::CONFLICT);
+  }
+  
+
+  // Get the "users" collection from MongoDB, mapping each document to the User struct
   let user = User {
     id: None,
     full_name: payload.full_name,
@@ -32,8 +53,8 @@ pub async fn create_user(
     password: hash(payload.password, DEFAULT_COST)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
     role: payload.role,
-    created_by: None,
-    updated_by: None,
+    created_by: Some(admin_object_id),
+    updated_by: Some(admin_object_id),
     deleted:false,
     created_at: Some(Utc::now()),
     updated_at: Some(Utc::now()),

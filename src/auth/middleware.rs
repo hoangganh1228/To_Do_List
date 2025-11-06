@@ -16,6 +16,11 @@
     pub message: String,
   }
 
+  pub trait RoleGuard {
+    fn require_role(&self, require_role: i16) -> Result<(), AuthError>;
+    // fn is_role(&self, require_role: i16) -> bool;
+  }
+
   /// Implement `IntoResponse` for `AuthError`
   /// This allows `AuthError` to be automatically converted into an HTTP response
   impl IntoResponse for AuthError {
@@ -25,6 +30,21 @@
       }));
       (StatusCode::UNAUTHORIZED, body).into_response()
     }
+  }
+
+  impl RoleGuard for AuthenticatedUser {
+    fn require_role(&self, require_role: i16) -> Result<(), AuthError> {
+      if self.role != require_role {
+        return Err(AuthError {
+          message: "Unauthorized".to_string(),
+        });
+      }
+      Ok(())
+    }
+
+    // fn is_role(&self, require_role: i16) -> bool {
+    //   self.role == require_role
+    // }
   }
 
   // Struct that represents an authenticated user
@@ -80,7 +100,7 @@
   pub async fn auth_middleware(
     mut request: Request,
     next: Next,
-) -> Result<Response, AuthError> {
+  ) -> Result<Response, AuthError> {
     // Lấy Authorization header
     let auth_header = request.headers()
         .get("Authorization")
@@ -111,5 +131,5 @@
     });
 
     Ok(next.run(request).await)
-}
+  }
 
