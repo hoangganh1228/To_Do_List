@@ -1,7 +1,7 @@
 use axum::{
   http::StatusCode, 
   extract::{State, Path, Query},
-  response::Json,
+  response::{Json, IntoResponse},
 };
 use futures_util::StreamExt;
 use mongodb::bson::oid::ObjectId;
@@ -12,6 +12,8 @@ use crate::{
   dtos::{CreateTaskRequest, UpdateTaskRequest, TaskResponse},
 };
 use chrono::{DateTime, Utc};
+use crate::utils::{ResultExt, AppError};
+
 
 #[derive(Deserialize)]
 pub struct TaskQuery {
@@ -23,11 +25,11 @@ pub struct TaskQuery {
 pub async fn create_task(
   State(app_state): State<AppState>,
   Json(payload): Json<CreateTaskRequest>,
-) -> Result<Json<TaskResponse>, StatusCode> {
+) -> Result<Json<TaskResponse>, AppError> {
   let collection = app_state.db.collection::<Task>("tasks");
 
   let user_object_id = ObjectId::parse_str(&payload.user_id)
-      .map_err(|_| StatusCode::BAD_REQUEST)?;
+      .bad_request("Invalid user ID")?;
 
   let task = Task {
     id: None,
@@ -45,10 +47,10 @@ pub async fn create_task(
   };
 
   let result = collection.insert_one(&task).await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      .internal_error("Failed to insert task into database")?;
   
   let task_id = result.inserted_id.as_object_id()
-      .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+      .ok_or_else(|| AppError::internal_error("Failed to get inserted task ID"))?;
   
   let response = TaskResponse {
     id: task_id.to_hex(),
@@ -70,7 +72,7 @@ pub async fn create_task(
 pub async fn get_task(
   State(app_state): State<AppState>,
   Path(id): Path<ObjectId>,
-) -> Result<Json<TaskResponse>, StatusCode> {
+) -> Result<Json<TaskResponse>, AppError> {
   let collection = app_state.db.collection::<Task>("tasks");
   let filter = mongodb::bson::doc! { 
     "_id": id,
@@ -79,9 +81,12 @@ pub async fn get_task(
 
   let task = collection.find_one(filter)
       .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-      .ok_or(StatusCode::NOT_FOUND)?;
-  
+      .internal_error("Failed to query database")?;
+
+  if task.is_none() {
+    return Err(AppError::not_found("Task not found"));
+  }
+  let task = task.unwrap();
   let response = TaskResponse {
     id: task.id.unwrap().to_hex(),
     user_id: task.user_id.to_hex(),
@@ -133,13 +138,13 @@ pub async fn list_tasks(
 
 pub async fn update_task(
   State(app_state): State<AppState>,
-  Path(id): Path<String>,  // Đổi từ ObjectId thành String
+  Path(id): Path<String>,  
   Json(payload): Json<UpdateTaskRequest>,
-) -> Result<Json<TaskResponse>, StatusCode> {
+) -> Result<Json<TaskResponse>, AppError> {
   let collection = app_state.db.collection::<Task>("tasks");
 
   let task_id = ObjectId::parse_str(&id)  
-      .map_err(|_| StatusCode::BAD_REQUEST)?;
+      .bad_request("Invalid task ID")?;
 
   let filter = mongodb::bson::doc! { 
     "_id": task_id,  
@@ -149,8 +154,8 @@ pub async fn update_task(
   let existing_task = collection
       .find_one(filter.clone())  
       .await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-      .ok_or(StatusCode::NOT_FOUND)?;
+      .internal_error("Failed to query database")?
+      .ok_or_else(|| AppError::not_found("Task not found"))?;
 
   let updated_task = Task {
     id: Some(task_id), 
@@ -170,7 +175,7 @@ pub async fn update_task(
   collection
     .replace_one(filter, &updated_task)  
     .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .internal_error("Failed to update task in database")?;
   
   let response = TaskResponse {
     id: task_id.to_hex(),  
@@ -192,15 +197,16 @@ pub async fn update_task(
 pub async fn delete_task(
   State(app_state): State<AppState>,
   Path(id): Path<ObjectId>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, AppError> {
   let collection = app_state.db.collection::<Task>("tasks");
   let filter = mongodb::bson::doc! { 
     "_id": id,
     "deleted": false
   };
 
-  let result = collection.update_one(filter, mongodb::bson::doc! { "$set": { "deleted": true } }).await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+  let result = collection.update_one(filter, mongodb::bson::doc! { "$set": { "deleted": true } })
+    .await
+    .internal_error("Failed to delete task in database")?;
 
   Ok(StatusCode::NO_CONTENT)
 }

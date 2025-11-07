@@ -18,17 +18,17 @@ use crate::auth::jwt::create_token;
 use bcrypt::verify;
 use std::time::Instant;
 use crate::auth::middleware::{AuthenticatedUser, RoleGuard};
-
+use crate::utils::{ResultExt, AppError};
 
 pub async fn create_user(
   State(app_state): State<AppState>,
   admin: AuthenticatedUser,
   Json(payload): Json<CreateUserRequest>,
-) -> Result<Json<UserResponse>, StatusCode> {
-  admin.require_role(0).map_err(|_| StatusCode::FORBIDDEN)?;
+) -> Result<Json<UserResponse>, AppError> {
+  admin.require_role(0).map_err(|e| AppError::forbidden(e.message))?;
 
   let admin_object_id = ObjectId::parse_str(&admin.user_id)
-      .map_err(|_| StatusCode::BAD_REQUEST)?;
+      .bad_request("Invalid user ID")?;
 
   let collection = app_state.db.collection::<User>("users");
   
@@ -38,12 +38,11 @@ pub async fn create_user(
   };
 
   let existing_user = collection.find_one(existing_user_filter).await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      .internal_error("Failed to query database")?;
   
   if existing_user.is_some() {
-    return Err(StatusCode::CONFLICT);
+    return Err(AppError::conflict("User already exists"));
   }
-  
 
   // Get the "users" collection from MongoDB, mapping each document to the User struct
   let user = User {
@@ -51,7 +50,7 @@ pub async fn create_user(
     full_name: payload.full_name,
     email: payload.email,
     password: hash(payload.password, DEFAULT_COST)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?,
+        .internal_error("Failed to hash password")?,
     role: payload.role,
     created_by: Some(admin_object_id),
     updated_by: Some(admin_object_id),
@@ -61,10 +60,10 @@ pub async fn create_user(
   };
 
   let result = collection.insert_one(&user).await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+      .internal_error("Failed to insert user into database")?;
   
   let user_id = result.inserted_id.as_object_id()
-      .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+      .ok_or_else(|| AppError::internal_error("Failed to get inserted user ID"))?;
   
   let response = UserResponse {
     id: user_id.to_hex(),
@@ -83,7 +82,7 @@ pub async fn create_user(
 pub async fn get_user(
   State(app_state): State<AppState>,
   Path(id): Path<ObjectId>,
-) -> Result<Json<UserResponse>, StatusCode> {
+) -> Result<Json<UserResponse>, AppError> {
   
   let collection = app_state.db.collection::<User>("users");
   let filter = mongodb::bson::doc! { 
@@ -92,9 +91,11 @@ pub async fn get_user(
   };
 
   let user = collection.find_one(filter).await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-      .ok_or(StatusCode::NOT_FOUND)?;
-
+      .internal_error("Failed to query database")?;
+  if user.is_none() {
+    return Err(AppError::not_found("User not found"));
+  }
+  let user = user.unwrap();
   let response = UserResponse {
     id: user.id.unwrap().to_hex(),
     full_name: user.full_name,
@@ -111,18 +112,17 @@ pub async fn get_user(
 
 pub async fn list_users(
   State(app_state): State<AppState>,
-) -> Result<Json<Vec<UserResponse>>, StatusCode> {
+) -> Result<Json<Vec<UserResponse>>, AppError> {
   let collection = app_state.db.collection::<User>("users");
 
   let filter = mongodb::bson::doc! { "deleted": false };
 
   let mut cursor = collection.find(filter).await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
+      .internal_error("Failed to query database")?;
   let mut users = Vec::new();
   while let Some(user_result) = cursor.next().await
   {
-    let user = user_result.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let user = user_result.internal_error("Failed to query database")?;
     users.push(UserResponse {
       id: user.id.unwrap().to_hex(),
       full_name: user.full_name,
@@ -138,10 +138,60 @@ pub async fn list_users(
   Ok(Json(users))
 }
 
+pub async fn update_user(
+  State(app_state): State<AppState>,
+  admin: AuthenticatedUser,
+  Path(id): Path<ObjectId>,
+  Json(payload): Json<UpdateUserRequest>,
+) -> Result<Json<UserResponse>, AppError> {
+  admin.require_role(0).map_err(|e| AppError::forbidden(e.message))?;
+
+  let collection = app_state.db.collection::<User>("users");
+  
+  let admin_object_id = ObjectId::parse_str(&admin.user_id)
+      .bad_request("Invalid user ID")?;
+  
+  let filter = mongodb::bson::doc! { 
+    "_id": id,
+    "deleted": false
+  };
+  let existing_user = collection.find_one(filter.clone())
+      .await
+      .internal_error("Failed to query database")?
+      .ok_or_else(|| AppError::not_found("User not found"))?;
+  let updated_user = User {
+    id: Some(id),
+    full_name: payload.full_name.unwrap_or(existing_user.full_name),
+    email: payload.email.unwrap_or(existing_user.email),
+    password: payload.password.unwrap_or(existing_user.password),
+    role: payload.role.unwrap_or(existing_user.role),
+    deleted: existing_user.deleted,
+    created_by: Some(admin_object_id),
+    updated_by: Some(admin_object_id),
+    created_at: existing_user.created_at,
+    updated_at: Some(Utc::now()),
+  };
+  collection.replace_one(filter, &updated_user)
+      .await
+      .internal_error("Failed to update user in database")?;
+      
+  let response = UserResponse {
+    id: id.to_hex(),
+    full_name: updated_user.full_name,
+    email: updated_user.email,
+    role: updated_user.role,
+    created_by: updated_user.created_by.map(|id| id.to_hex()),
+    updated_by: updated_user.updated_by.map(|id| id.to_hex()),
+    created_at: updated_user.created_at,
+    updated_at: updated_user.updated_at,
+  };
+  Ok(Json(response))
+}
+
 pub async fn login(
   State(app_state): State<AppState>,
   Json(payload): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, StatusCode> {
+) -> Result<Json<LoginResponse>, AppError> {
   let collection = app_state.db.collection::<User>("users");
 
   let filter = mongodb::bson::doc! { 
@@ -152,15 +202,14 @@ pub async fn login(
   let start = Instant::now();
 
   let user = collection.find_one(filter).await
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-      .ok_or(StatusCode::NOT_FOUND)?;
+      .internal_error("Failed to query database")?
+      .ok_or_else(|| AppError::not_found("User not found"))?;
   
   verify(&payload.password, &user.password)
-    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    .internal_error("Failed to verify password")?;
   
     if !verify(&payload.password, &user.password)
-      .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? {
-      return Err(StatusCode::UNAUTHORIZED);
+      .internal_error("Failed to verify password")? {
     }
 
 
@@ -171,7 +220,8 @@ pub async fn login(
     user.role,
   );
   
-  let token = create_token(claims).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+  let token = create_token(claims)
+      .internal_error("Failed to create token")?;
   let response = LoginResponse { token };
   println!("⏱️ Handler took {:?}", start.elapsed());
   Ok(Json(response))
